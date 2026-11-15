@@ -5,7 +5,7 @@
 
 import { createGame, startRun, update, autopilot, applyUpgrade, MODES } from './sim.js';
 import { createScriptedInput } from './input.js';
-import { spawnEnemy, spawnBullet, spawnParticle } from './entities.js';
+import { WORLD, spawnEnemy, spawnBullet, spawnParticle } from './entities.js';
 import { draw } from './render.js';
 
 const STEP = 1 / 60;
@@ -45,31 +45,75 @@ function stageTitle(game) {
 function stageCombat(game) {
   const input = createScriptedInput();
   startRun(game, null);
-  // Play ~30 seconds of autopilot: mid-wave-3 or 4, busy and alive.
-  runSteps(game, input, 30 * 60);
+  // Play ~45 seconds of autopilot: mid-wave-4 or 5, upgraded ship, busy and alive.
+  runSteps(game, input, 45 * 60);
   if (game.mode === MODES.GAMEOVER) {
     // The autopilot died on this seed: restart once with a kinder seed.
     const retry = createGame(game.seed + 101);
     startRun(retry, null);
-    runSteps(retry, input, 30 * 60);
+    runSteps(retry, input, 45 * 60);
     copyGameState(game, retry);
   }
-  // Make the frame dense: top the swarm up to a dozen hostiles, mixed types,
-  // a stinger mid-volley, and a burst of fire around the player.
-  const types = ['drone', 'weaver', 'stinger', 'splitter', 'drone', 'weaver'];
-  let i = 0;
-  while (game.enemies.length < 12 && i < 10) {
+  // Compose the cover frame: centre the ship, clear the field, then lay
+  // out a fresh swarm in a tight ring around it with a tracer stream
+  // leading the eye to the ship — a focal point at thumbnail size.
+  // The score, wave and kills are the real autopilot run's; the layout is staged.
+  const p = game.player;
+  p.x = 640;
+  p.y = 380;
+  p.vx = 0;
+  p.vy = 0;
+  game.enemies = [];
+  game.enemyBullets = [];
+  const types = ['drone', 'weaver', 'stinger', 'splitter', 'drone', 'weaver', 'stinger'];
+  for (let i = 0; i < 18; i++) {
     const type = types[i % types.length];
-    game.enemies.push(
-      spawnEnemy(type, 140 + ((i * 173) % 1000), 110 + ((i * 211) % 480), game.wave, game.rng),
-    );
-    i += 1;
+    const a = game.rng.angle();
+    // Two close in for about-to-collide drama, the rest in a 140-300 ring.
+    const r = i < 2 ? game.rng.range(95, 130) : game.rng.range(140, 300);
+    const x = Math.min(Math.max(p.x + Math.cos(a) * r, 40), WORLD.w - 40);
+    const y = Math.min(Math.max(p.y + Math.sin(a) * r, 40), WORLD.h - 40);
+    game.enemies.push(spawnEnemy(type, x, y, game.wave, game.rng));
   }
+  // Aim the ship at the nearest enemy and put a tracer stream on that line.
+  let target = null;
+  let best = Infinity;
+  for (const e of game.enemies) {
+    const d = (e.x - p.x) * (e.x - p.x) + (e.y - p.y) * (e.y - p.y);
+    if (d < best) {
+      best = d;
+      target = e;
+    }
+  }
+  if (target) {
+    p.angle = Math.atan2(target.y - p.y, target.x - p.x);
+    for (let d = 30; d <= 240; d += 30) {
+      game.bullets.push(
+        spawnBullet(p.x + Math.cos(p.angle) * d, p.y + Math.sin(p.angle) * d, p.angle, p.bulletSpeed, p.damage, p.pierce, true, p.bulletSize),
+      );
+    }
+    for (let k = -1; k <= 1; k++) {
+      const a = p.angle + k * 0.09;
+      game.bullets.push(
+        spawnBullet(p.x + Math.cos(a) * 24, p.y + Math.sin(a) * 24, a, p.bulletSpeed, p.damage, p.pierce, true, p.bulletSize),
+      );
+    }
+  }
+  // Stingers mid-volley: an orb in flight from each one toward the player.
   for (const e of game.enemies) {
     if (e.type === 'stinger') {
       const a = Math.atan2(game.player.y - e.y, game.player.x - e.x);
-      game.enemyBullets.push(spawnBullet(e.x, e.y, a, 260, 10, 0, false, 6));
+      const mx = e.x + Math.cos(a) * 120;
+      const my = e.y + Math.sin(a) * 120;
+      game.enemyBullets.push(spawnBullet(mx, my, a, 260, 10, 0, false, 6));
     }
+  }
+  // Fresh kill bursts at the two nearest enemies, for explosions.
+  const near = [...game.enemies].sort(
+    (a, b) => (a.x - p.x) ** 2 + (a.y - p.y) ** 2 - ((b.x - p.x) ** 2 + (b.y - p.y) ** 2),
+  );
+  for (const e of near.slice(0, 2)) {
+    spawnParticle(game.particles, e.x, e.y, e.color, 20, 300, 0.5, 3);
   }
   spawnParticle(game.particles, game.player.x, game.player.y, '#ffe66d', 18, 260, 0.5, 2);
   game.waveBannerTimer = 0;
@@ -123,20 +167,23 @@ function stageVictory(game) {
   game.mode = MODES.VICTORY;
   game.over = true;
   game.best = 284750;
-  for (let i = 0; i < 5; i++) {
+  // A full-frame celebration: bursts across the whole arena, corners included,
+  // so the frame is a firework show around the panel instead of empty dark space.
+  const colors = ['#ffd166', '#4cc9f0', '#ff4d6d', '#80ed99', '#c77dff'];
+  for (let i = 0; i < 9; i++) {
     spawnParticle(
       game.particles,
-      game.rng.range(200, 1080),
-      game.rng.range(100, 520),
-      ['#ffd166', '#4cc9f0', '#ff4d6d', '#80ed99'][i % 4],
-      30,
-      300,
-      1.2,
+      game.rng.range(80, 1200),
+      game.rng.range(60, 660),
+      colors[i % colors.length],
+      40,
+      320,
+      1.4,
       3,
     );
   }
   // Let the celebration particles age a little so the frame is mid-burst.
-  for (let s = 0; s < 20; s++) update(game, STEP, input, null);
+  for (let s = 0; s < 35; s++) update(game, STEP, input, null);
   game.time = 12;
 }
 
