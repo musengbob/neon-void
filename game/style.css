@@ -1,0 +1,59 @@
+/* NEON VOID — page chrome around the canvas. The game itself draws everything. */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #05020c;
+  color: #e0fbfc;
+  font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+}
+
+.stage {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+}
+
+#game {
+  width: min(1280px, 96vw);
+  height: auto;
+  aspect-ratio: 16 / 9;
+  display: block;
+  border: 1px solid rgba(124, 77, 255, 0.45);
+  border-radius: 10px;
+  box-shadow: 0 0 42px rgba(67, 97, 238, 0.35);
+  background: #070312;
+  cursor: crosshair;
+}
+
+.hint {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: rgba(224, 251, 252, 0.55);
+  font-family: Consolas, monospace;
+}
+
+/* Screenshot mode: the canvas fills the 1280x720 viewport exactly. */
+body.shot .stage {
+  padding: 0;
+  gap: 0;
+  justify-content: flex-start;
+}
+
+body.shot #game {
+  width: 1280px;
+  height: 720px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+body.shot .hint {
+  display: none;
+}
