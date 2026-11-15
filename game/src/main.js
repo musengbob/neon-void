@@ -6,11 +6,12 @@
 //   ?shot=title|combat|upgrade|victory&seed=N — render one staged frame
 //   ?demo=1&seed=N — autopilot plays on its own (soak tests, screenshots)
 
-import { createGame, startRun, update, applyUpgrade, autopilot, loadBest, MODES } from './sim.js';
+import { createGame, startRun, update, applyUpgrade, buyRepair, buyReroll, quitToTitle, autopilot, loadBest, MODES } from './sim.js';
 import { createInput, createScriptedInput } from './input.js';
 import { createAudio } from './audio.js';
-import { draw } from './render.js';
+import { draw, titleDifficultyAt, pauseHit, upgradeShopAt } from './render.js';
 import { renderShot } from './shots.js';
+import { DIFFICULTY_ORDER } from './world.js';
 
 const STEP = 1 / 60;
 const canvas = document.getElementById('game');
@@ -54,39 +55,70 @@ function boot() {
     },
   };
 
-  function startPlaying() {
+  function startPlaying(difficultyId) {
     audio.ensure();
     audio.startMusic();
-    startRun(game, audio);
+    startRun(game, audio, difficultyId || 'standard');
   }
 
-  function onTitleAction() {
+  function onTitleAction(difficultyId) {
     if (game.mode !== MODES.TITLE) return;
     audio.ensure();
     audio.click();
-    startPlaying();
+    startPlaying(difficultyId);
   }
 
   function onEndAction() {
     if (game.mode !== MODES.GAMEOVER && game.mode !== MODES.VICTORY) return;
     audio.click();
-    startPlaying();
+    startPlaying(game.difficulty);
+  }
+
+  function onPauseAction(action) {
+    if (game.mode !== MODES.PAUSED) return;
+    if (action === 'resume') {
+      audio.click();
+      togglePause();
+    } else if (action === 'restart') {
+      audio.click();
+      startPlaying(game.difficulty);
+    } else if (action === 'quit') {
+      audio.click();
+      audio.stopMusic();
+      quitToTitle(game);
+    }
   }
 
   canvas.addEventListener('mousedown', () => {
-    if (game.mode === MODES.TITLE) onTitleAction();
+    if (game.mode === MODES.TITLE) onTitleAction(titleDifficultyAt(input.mouse.x, input.mouse.y));
     else if (game.mode === MODES.GAMEOVER || game.mode === MODES.VICTORY) onEndAction();
-    else if (game.mode === MODES.PAUSED) togglePause();
+    else if (game.mode === MODES.PAUSED) onPauseAction(pauseHit(input.mouse.x, input.mouse.y));
   });
   window.addEventListener('keydown', (event) => {
     const k = event.key === ' ' ? 'space' : event.key.toLowerCase();
     if (k === 'm') {
       audio.ensure();
       audio.toggleMute();
+      game.muted = audio.muted;
       return;
     }
-    if (game.mode === MODES.TITLE && (k === 'enter' || k === 'space')) {
-      onTitleAction();
+    if (game.mode === MODES.TITLE) {
+      // 1 / 2 / 3 start that difficulty; Enter starts the picked one.
+      const idx = ['1', '2', '3'].indexOf(k);
+      if (idx >= 0) {
+        onTitleAction(DIFFICULTY_ORDER[idx]);
+        return;
+      }
+      if (k === 'enter' || k === 'space') {
+        onTitleAction();
+        return;
+      }
+      return;
+    }
+    if (game.mode === MODES.PAUSED) {
+      if (k === 'r') onPauseAction('restart');
+      else if (k === 'q') onPauseAction('quit');
+      else if (k === 'p') togglePause();
       return;
     }
     if ((game.mode === MODES.GAMEOVER || game.mode === MODES.VICTORY) && k === 'r') {
@@ -134,14 +166,19 @@ function boot() {
 
     // One-shot keys and clicks, handled before the sim steps.
     if (game.mode === MODES.UPGRADE && game.draft.length === 3 && demo) {
-      // The demo autopilot takes the middle card so the soak keeps playing.
-      applyUpgrade(game, game.draft[1], audio);
+      // The demo autopilot repairs when hurt and can afford it, then takes
+      // the middle card so the soak keeps playing.
+      if (game.salvage >= 30 && game.player.hp < game.player.maxHp * 0.55) {
+        buyRepair(game, audio);
+      } else {
+        applyUpgrade(game, game.draft[1], audio);
+      }
     }
     if (!demo) {
       game.mouseX = input.mouse.x;
       game.mouseY = input.mouse.y;
       if (game.mode === MODES.UPGRADE) {
-        // Number keys pick a card: 1 / 2 / 3.
+        // Number keys pick a card: 1 / 2 / 3. Shop keys: 4 repair, 5 reroll.
         for (const n of ['1', '2', '3']) {
           if (input.keys.has(n)) {
             input.keys.delete(n);
@@ -149,10 +186,23 @@ function boot() {
             break;
           }
         }
+        if (input.keys.has('4')) {
+          input.keys.delete('4');
+          buyRepair(game, audio);
+        }
+        if (input.keys.has('5')) {
+          input.keys.delete('5');
+          buyReroll(game, audio);
+        }
         const click = input.takeClick();
         if (click) {
           const idx = draftChoiceAt(click.x, click.y);
           if (idx >= 0) applyUpgrade(game, game.draft[idx], audio);
+          else {
+            const shop = upgradeShopAt(click.x, click.y);
+            if (shop === 'repair') buyRepair(game, audio);
+            else if (shop === 'reroll') buyReroll(game, audio);
+          }
         }
       } else {
         input.takeClick();

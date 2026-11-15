@@ -49,21 +49,24 @@ export function resetPlayer(p) {
   Object.assign(p, fresh);
 }
 
-// Enemy types: name, colour, hp, speed, radius, score, behaviour.
+// Enemy types: name, colour, hp, speed, radius, score, salvage, behaviour.
+// The name is shown in the HUD's incoming list and the wave banner;
+// salvage is the economy — kills pay it, and it is spent between waves.
 export const ENEMY_TYPES = {
-  drone: { hp: 18, speed: 95, radius: 15, score: 50, color: '#ff4d6d', kind: 'chaser' },
-  weaver: { hp: 14, speed: 130, radius: 13, score: 70, color: '#ff9f1c', kind: 'weaver' },
-  stinger: { hp: 24, speed: 70, radius: 16, score: 90, color: '#b5179e', kind: 'shooter' },
-  splitter: { hp: 34, speed: 75, radius: 20, score: 120, color: '#4cc9f0', kind: 'splitter' },
-  shard: { hp: 8, speed: 190, radius: 9, score: 25, color: '#4cc9f0', kind: 'chaser' },
-  warden: { hp: 900, speed: 42, radius: 52, score: 2500, color: '#f72585', kind: 'boss' },
+  drone: { name: 'HUSK DRONE', hp: 18, speed: 95, radius: 15, score: 50, salvage: 5, color: '#ff4d6d', kind: 'chaser' },
+  weaver: { name: 'RAZOR WEAVER', hp: 14, speed: 130, radius: 13, score: 70, salvage: 7, color: '#ff9f1c', kind: 'weaver' },
+  stinger: { name: 'SPIRE STINGER', hp: 24, speed: 70, radius: 16, score: 90, salvage: 9, color: '#b5179e', kind: 'shooter' },
+  splitter: { name: 'HIVE SPLITTER', hp: 34, speed: 75, radius: 20, score: 120, salvage: 12, color: '#4cc9f0', kind: 'splitter' },
+  shard: { name: 'HIVE SHARD', hp: 8, speed: 190, radius: 9, score: 25, salvage: 2, color: '#4cc9f0', kind: 'chaser' },
+  warden: { name: 'THE WARDEN', hp: 900, speed: 42, radius: 52, score: 2500, salvage: 100, color: '#f72585', kind: 'boss' },
 };
 
-export function spawnEnemy(type, x, y, wave, rng) {
+export function spawnEnemy(type, x, y, wave, rng, diff) {
   const def = ENEMY_TYPES[type];
-  const hpScale = 1 + (wave - 1) * 0.14;
+  const hpScale = (1 + (wave - 1) * 0.14) * (diff ? diff.enemyHp : 1);
   return {
     type,
+    name: def.name,
     kind: def.kind,
     x,
     y,
@@ -73,14 +76,16 @@ export function spawnEnemy(type, x, y, wave, rng) {
     radius: def.radius,
     hp: Math.round(def.hp * hpScale),
     maxHp: Math.round(def.hp * hpScale),
-    speed: def.speed * rng.range(0.9, 1.15),
+    speed: def.speed * rng.range(0.9, 1.15) * (diff ? diff.enemySpeed : 1),
     score: def.score,
+    salvage: def.salvage,
     color: def.color,
     t: rng.range(0, TAU), // behaviour clock
     fireTimer: rng.range(1, 2.5),
     hitFlash: 0,
     dead: false,
     elite: false,
+    phase: 1, // boss only: the Warden's current phase (boss.js)
   };
 }
 

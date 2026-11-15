@@ -116,6 +116,8 @@ function stageCombat(game) {
     spawnParticle(game.particles, e.x, e.y, e.color, 20, 300, 0.5, 3);
   }
   spawnParticle(game.particles, game.player.x, game.player.y, '#ffe66d', 18, 260, 0.5, 2);
+  // The economy reads at a glance: a fat salvage purse from the real run.
+  game.salvage = Math.max(game.salvage, 120);
   game.waveBannerTimer = 0;
   game.shake = 0;
 }
@@ -137,6 +139,8 @@ function stageUpgrade(game) {
   }
   game.mouseX = 640;
   game.mouseY = 355; // hover the middle card
+  // A purse that makes both shop buttons affordable, so the shot shows them lit.
+  game.salvage = Math.max(game.salvage, 85);
   game.waveBannerTimer = 0;
   game.shake = 0;
 }
@@ -159,8 +163,10 @@ function stageVictory(game) {
   // Stage the state a real win produces: full clear, stats filled in.
   game.score = 284750;
   game.kills = 342;
+  game.salvageEarned = 640;
   game.playTime = 612;
   game.wave = 10;
+  game.difficulty = 'standard';
   game.stats.wavesCleared = 10;
   game.stats.upgradesTaken = 9;
   game.stats.dashes = 87;

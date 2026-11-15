@@ -5,6 +5,25 @@
 
 export const TOTAL_WAVES = 10;
 
+// What each wave is called: the banner names it, so every wave feels
+// like a chapter of the siege rather than a number.
+export const WAVE_NAMES = [
+  'FIRST CONTACT',
+  'THE WEAVE TIGHTENS',
+  'SPIRES ON THE HORIZON',
+  'THE HIVE STIRS',
+  'SWARM TIDE',
+  'ELITES AWAKEN',
+  'THE LONG NIGHT',
+  'SIEGE OF THE GATE',
+  'THE LAST CALM',
+  'THE WARDEN AWAKENS',
+];
+
+export function waveName(wave) {
+  return WAVE_NAMES[Math.min(Math.max(wave, 1), TOTAL_WAVES) - 1];
+}
+
 const MIX = [
   // wave: [drones, weavers, stingers, splitters]
   [6, 0, 0, 0],
@@ -38,9 +57,15 @@ export function waveBudget(wave) {
   return MIX[Math.min(wave, TOTAL_WAVES) - 1].reduce((a, b) => a + b, 0);
 }
 
+export function waveCompCounts(wave) {
+  const row = MIX[Math.min(wave, TOTAL_WAVES) - 1];
+  const types = ['drone', 'weaver', 'stinger', 'splitter'];
+  return row.map((count, i) => ({ type: types[i], count })).filter((c) => c.count > 0);
+}
+
 // Seconds between spawns: faster as waves rise, never below the floor.
 export function spawnInterval(wave) {
-  return Math.max(0.28, 0.85 - wave * 0.05);
+  return Math.max(0.24, 0.72 - wave * 0.05);
 }
 
 export function isBossWave(wave) {

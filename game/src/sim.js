@@ -22,8 +22,10 @@ import {
   updateFloatText,
   ENEMY_TYPES,
 } from './entities.js';
-import { TOTAL_WAVES, waveComp, spawnInterval, isBossWave, eliteChance } from './waves.js';
+import { TOTAL_WAVES, waveComp, waveName, spawnInterval, isBossWave, eliteChance } from './waves.js';
 import { rollDraft } from './upgrades.js';
+import { DIFFICULTIES, makeDebris } from './world.js';
+import { wardenPhase, wardenPhaseName, wardenFire } from './boss.js';
 
 export const MODES = {
   TITLE: 'title',
@@ -33,6 +35,10 @@ export const MODES = {
   GAMEOVER: 'gameover',
   VICTORY: 'victory',
 };
+
+export const REPAIR_COST = 30;
+export const REPAIR_AMOUNT = 40;
+export const REROLL_COST = 15;
 
 export function createGame(seed = 7) {
   const rng = createRng(seed);
@@ -47,8 +53,14 @@ export function createGame(seed = 7) {
     combo: 1,
     comboTimer: 0,
     kills: 0,
+    salvage: 0,
+    salvageEarned: 0,
     shotsFired: 0,
     best: 0,
+    difficulty: 'standard',
+    diff: DIFFICULTIES.standard,
+    titlePick: 'standard',
+    muted: false,
     player: createPlayer(),
     bullets: [],
     enemyBullets: [],
@@ -68,6 +80,7 @@ export function createGame(seed = 7) {
     waveBannerTimer: 0,
     stars: makeStars(rng),
     nebula: makeNebula(rng),
+    debris: makeDebris(rng),
     stats: { wavesCleared: 0, upgradesTaken: 0, dashes: 0 },
     over: false,
   };
@@ -117,7 +130,11 @@ export function saveBest(score) {
   }
 }
 
-export function startRun(game, audio) {
+export function startRun(game, audio, difficultyId) {
+  const diff = DIFFICULTIES[difficultyId] || DIFFICULTIES.standard;
+  game.difficulty = diff.id;
+  game.diff = diff;
+  game.titlePick = diff.id;
   const p = game.player;
   Object.assign(game, {
     mode: MODES.PLAYING,
@@ -128,6 +145,8 @@ export function startRun(game, audio) {
     combo: 1,
     comboTimer: 0,
     kills: 0,
+    salvage: 0,
+    salvageEarned: 0,
     shotsFired: 0,
     bullets: [],
     enemyBullets: [],
@@ -149,9 +168,30 @@ export function startRun(game, audio) {
     over: false,
   });
   const fresh = createPlayer();
+  fresh.maxHp = diff.hull;
+  fresh.hp = diff.hull;
   Object.assign(p, fresh);
   game.best = loadBest();
   startWave(game, audio);
+}
+
+// Back to the title screen from the pause menu: clear the field and wait.
+export function quitToTitle(game) {
+  game.mode = MODES.TITLE;
+  game.over = false;
+  game.enemies = [];
+  game.bullets = [];
+  game.enemyBullets = [];
+  game.pickups = [];
+  game.texts = [];
+  game.spawnQueue = [];
+  game.bossActive = false;
+  game.wave = 0;
+  game.waveBanner = '';
+  game.waveBannerTimer = 0;
+  const fresh = createPlayer();
+  Object.assign(game.player, fresh);
+  game.best = loadBest();
 }
 
 export function startWave(game, audio) {
@@ -160,9 +200,7 @@ export function startWave(game, audio) {
   game.spawnTimer = 0.4;
   game.bossSpawned = false;
   game.bossActive = false;
-  game.waveBanner = isBossWave(game.wave)
-    ? `WAVE ${game.wave} — THE WARDEN`
-    : `WAVE ${game.wave} / ${TOTAL_WAVES}`;
+  game.waveBanner = `WAVE ${game.wave} — ${waveName(game.wave)}`;
   game.waveBannerTimer = 2.2;
   if (isBossWave(game.wave) && audio) audio.bossAlarm();
 }
@@ -198,7 +236,7 @@ function spawnPoint(game, rng) {
 function spawnNext(game) {
   const type = game.spawnQueue.shift();
   const at = spawnPoint(game, game.rng);
-  const e = spawnEnemy(type, at.x, at.y, game.wave, game.rng);
+  const e = spawnEnemy(type, at.x, at.y, game.wave, game.rng, game.diff);
   if (game.rng.chance(eliteChance(game.wave))) makeElite(e);
   game.enemies.push(e);
   spawnParticle(game.particles, at.x, at.y, e.color, 8, 120, 0.4, 2);
@@ -206,7 +244,7 @@ function spawnNext(game) {
 
 function spawnBoss(game) {
   const at = spawnPoint(game, game.rng);
-  const boss = spawnEnemy('warden', at.x, at.y, game.wave, game.rng);
+  const boss = spawnEnemy('warden', at.x, at.y, game.wave, game.rng, game.diff);
   game.enemies.push(boss);
   game.bossSpawned = true;
   game.bossActive = true;
@@ -218,7 +256,7 @@ function spawnBoss(game) {
 
 function clearWave(game, audio) {
   game.stats.wavesCleared += 1;
-  const bonus = 250 * game.wave;
+  const bonus = Math.round(250 * game.wave * game.diff.scoreMult);
   game.score += bonus;
   addFloatText(game.texts, 640, 300, `WAVE CLEAR  +${bonus}`, '#ffd166', 22);
   if (audio) audio.waveClear();
@@ -239,6 +277,28 @@ export function applyUpgrade(game, upgrade, audio) {
   spawnParticle(game.particles, game.player.x, game.player.y, upgrade.color, 30, 260, 0.7, 3);
   game.mode = MODES.PLAYING;
   startWave(game, audio);
+}
+
+// Between-wave shop: spend salvage on a hull repair. Stays in the draft.
+export function buyRepair(game, audio) {
+  if (game.mode !== MODES.UPGRADE) return false;
+  if (game.salvage < REPAIR_COST) return false;
+  if (game.player.hp >= game.player.maxHp) return false;
+  game.salvage -= REPAIR_COST;
+  game.player.hp = Math.min(game.player.maxHp, game.player.hp + REPAIR_AMOUNT);
+  addFloatText(game.texts, 640, 560, `HULL +${REPAIR_AMOUNT}`, '#80ed99', 16);
+  if (audio) audio.heal();
+  return true;
+}
+
+// Between-wave shop: spend salvage to roll a fresh draft of 3.
+export function buyReroll(game, audio) {
+  if (game.mode !== MODES.UPGRADE) return false;
+  if (game.salvage < REROLL_COST) return false;
+  game.salvage -= REROLL_COST;
+  game.draft = rollDraft(game.rng, game.owned);
+  if (audio) audio.click();
+  return true;
 }
 
 function damagePlayer(game, amount, audio) {
@@ -266,11 +326,16 @@ function damagePlayer(game, amount, audio) {
 function killEnemy(game, e, audio) {
   e.dead = true;
   game.kills += 1;
-  const gained = Math.round(e.score * game.combo);
+  const gained = Math.round(e.score * game.combo * game.diff.scoreMult);
   game.score += gained;
+  // Kills pay salvage: the between-wave economy. Elites pay triple.
+  const salvageGain = e.salvage * (e.elite ? 3 : 1);
+  game.salvage += salvageGain;
+  game.salvageEarned += salvageGain;
   game.combo = Math.min(8, game.combo + 0.25);
   game.comboTimer = 3;
   addFloatText(game.texts, e.x, e.y, `+${gained}`, '#ffffff', 13);
+  addFloatText(game.texts, e.x, e.y + 16, `+${salvageGain} SALVAGE`, '#ffd166', 11);
   spawnParticle(game.particles, e.x, e.y, e.color, e.type === 'warden' ? 90 : 22, 340, 0.7, 3);
   game.shake = Math.max(game.shake, e.type === 'warden' ? 16 : 4);
   game.hitStop = Math.max(game.hitStop, e.type === 'warden' ? 0.09 : 0.02);
@@ -357,18 +422,15 @@ function firePlayer(game, audio) {
 
 function enemyShoot(game, e, audio) {
   const p = game.player;
-  const a = Math.atan2(p.y - e.y, p.x - e.x);
   if (e.type === 'warden') {
-    // Radial burst: 10 orbs.
-    for (let i = 0; i < 10; i++) {
-      const ang = (i / 10) * TAU + e.t;
-      game.enemyBullets.push(spawnBullet(e.x, e.y, ang, 170, 14, 0, false, 7));
-    }
+    wardenFire(game, e);
     game.shake = Math.max(game.shake, 5);
-  } else {
-    game.enemyBullets.push(spawnBullet(e.x, e.y, a, 260, 10, 0, false, 6));
+    if (audio) audio.hit();
+    return;
   }
-  e.fireTimer = e.type === 'warden' ? 2.4 : 2.2 + game.rng.range(0, 0.8);
+  const a = Math.atan2(p.y - e.y, p.x - e.x);
+  game.enemyBullets.push(spawnBullet(e.x, e.y, a, 260, 10, 0, false, 6));
+  e.fireTimer = 2.2 + game.rng.range(0, 0.8);
   if (audio) audio.hit();
 }
 
@@ -464,6 +526,17 @@ export function update(game, dt, input, audio) {
   // --- enemies ---
   for (const e of game.enemies) {
     updateEnemy(e, p, dt, game.rng);
+    // Boss phase changes: new pattern, new banner, new alarm.
+    if (e.type === 'warden' && e.hp > 0) {
+      const phase = wardenPhase(e);
+      if (phase !== e.phase) {
+        e.phase = phase;
+        game.waveBanner = `THE WARDEN RAGES — ${wardenPhaseName(phase)}`;
+        game.waveBannerTimer = 2.2;
+        game.shake = Math.max(game.shake, 10);
+        if (audio) audio.bossAlarm();
+      }
+    }
     if ((e.kind === 'shooter' || e.kind === 'boss') && e.hp > 0) {
       e.fireTimer -= dt;
       const d = Math.hypot(p.x - e.x, p.y - e.y);
